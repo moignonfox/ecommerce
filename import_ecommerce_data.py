@@ -10,7 +10,7 @@ db = client["ecommerce"]
 client.drop_database("ecommerce")  # Réinitialiser la base
 
 # Charger le dataset CSV
-df = pd.read_csv("ecommerce_data.csv", encoding= "ISO-8859-1")
+df = pd.read_csv("ecommerce_data.csv", encoding= "ISO-8859-1")#, nrows=10000
 
 # Étape 1 : Créer la collection Produits
 # Extraire les produits uniques (StockCode, Description, UnitPrice)
@@ -33,7 +33,7 @@ def deduce_category(description):
 produits = []
 for idx, row in produits_df.iterrows():
     produit = {
-        "_id": row['StockCode'],  # Utiliser StockCode comme identifiant
+        "_id": str(row['StockCode']),  # Utiliser StockCode comme identifiant
         "nom": row['Description'],
         "categorie": deduce_category(row['Description']),
         "prix": float(row['UnitPrice']),

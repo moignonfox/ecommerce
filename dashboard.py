@@ -133,7 +133,8 @@ app.layout = html.Div([
     html.Div([
         dcc.Graph(id='ventes-par-categorie', style={'marginBottom': '20px'}),
         dcc.Graph(id='ventes-par-periode', style={'marginBottom': '20px'}),
-        dcc.Graph(id='stock-par-produit')
+        dcc.Graph(id='stock-par-produit', style={'marginBottom': '20px'}),
+        dcc.Graph(id='stock-evolution')  # Nouveau graphique pour l'évolution du stock
     ], style={
         'padding': '20px',
         'backgroundColor': '#f9f9f9',
@@ -154,7 +155,8 @@ app.layout = html.Div([
     [Output('metrics', 'children'),
      Output('ventes-par-categorie', 'figure'),
      Output('ventes-par-periode', 'figure'),
-     Output('stock-par-produit', 'figure')],
+     Output('stock-par-produit', 'figure'),
+     Output('stock-evolution', 'figure')],
     [Input('client-filter', 'value'),
      Input('date-filter', 'start_date'),
      Input('date-filter', 'end_date'),
@@ -200,6 +202,33 @@ def update_dashboard(client_id, start_date, end_date, produit_id):
     total_revenus = sum(c['montant_total'] for c in filtered_commandes)
     nombre_commandes = len(filtered_commandes)
     panier_moyen = total_revenus / nombre_commandes if nombre_commandes else 0
+
+    # Étape 4 : Calculer le stock restant pour chaque produit
+    produits = list(db.produits.find({} if not produit_id else {'_id': produit_id}))
+    quantites_vendues = {}
+    for commande in commandes:
+        for produit in commande['produits']:
+            prod_id = produit['produit_id']
+            quantite = produit['quantite']
+            quantites_vendues[prod_id] = quantites_vendues.get(prod_id, 0) + quantite
+
+    # Calculer le stock restant et préparer les données pour le graphique
+    stock_data = []
+    for p in produits:
+        prod_id = p['_id']
+        stock_initial = p['stock']
+        quantite_vendue = quantites_vendues.get(prod_id, 0)
+        stock_restant = max(0, stock_initial - quantite_vendue)
+        stock_data.append({
+            'Produit': p['nom'],
+            'Stock Restant': stock_restant,
+            'Stock Faible': stock_restant < 10  # Indiquer si le stock est faible (< 10 unités)
+        })
+
+    # Calculer le stock restant total pour la métrique
+    stock_restant_total = sum(item['Stock Restant'] for item in stock_data)
+
+    # Mettre à jour les métriques avec le stock restant total
     metrics = html.Div([
         html.Div([
             html.H3(f"Revenus totaux", style={'color': '#2c3e50'}),
@@ -212,6 +241,10 @@ def update_dashboard(client_id, start_date, end_date, produit_id):
         html.Div([
             html.H3(f"Nombre de commandes", style={'color': '#2c3e50'}),
             html.P(f"{nombre_commandes}", style={'fontSize': '24px', 'color': '#3498db'})
+        ], style={'textAlign': 'center'}),
+        html.Div([
+            html.H3(f"Stock restant total", style={'color': '#2c3e50'}),
+            html.P(f"{stock_restant_total}", style={'fontSize': '24px', 'color': '#3498db'})
         ], style={'textAlign': 'center'})
     ])
 
@@ -247,47 +280,56 @@ def update_dashboard(client_id, start_date, end_date, produit_id):
     else:
         fig_periode = px.line(title='Ventes par période')
 
-    # Stock restant par produit
-    # Étape 1 : Récupérer les produits (filtré si produit_id est sélectionné)
-    produits = list(db.produits.find({} if not produit_id else {'_id': produit_id}))
-
-    # Étape 2 : Calculer les quantités vendues pour chaque produit dans l'intervalle
-    quantites_vendues = {}
-    for commande in commandes:
-        for produit in commande['produits']:
-            prod_id = produit['produit_id']
-            quantite = produit['quantite']
-            quantites_vendues[prod_id] = quantites_vendues.get(prod_id, 0) + quantite
-
-    # Étape 3 : Calculer le stock restant pour chaque produit
-    stock_data = []
-    for p in produits:
-        prod_id = p['_id']
-        stock_initial = p['stock']
-        quantite_vendue = quantites_vendues.get(prod_id, 0)
-        stock_restant = max(0, stock_initial - quantite_vendue)  # Éviter les stocks négatifs
-        stock_data.append({
-            'Produit': p['nom'],
-            'Stock Restant': stock_restant
-        })
-
-    # Étape 4 : Créer le graphique
+    # Stock restant par produit (avec alerte de stock faible)
     df_stock = pd.DataFrame(stock_data)
     if not df_stock.empty:
         fig_stock = px.bar(df_stock, x='Produit', y='Stock Restant', title='Stock restant par produit',
-                           color_discrete_sequence=['#3498db'])
+                           color='Stock Faible',  # Colorer en fonction du stock faible
+                           color_discrete_map={True: '#e74c3c',
+                                               False: '#3498db'})  # Rouge pour stock faible, bleu sinon
         fig_stock.update_layout(
             xaxis_tickangle=-45,
             xaxis_title="Produit",
             yaxis_title="Stock Restant",
             height=600,
             margin=dict(b=150),
-            xaxis_tickfont=dict(size=10)
+            xaxis_tickfont=dict(size=10),
+            showlegend=False  # Cacher la légende car elle est évidente avec les couleurs
         )
     else:
         fig_stock = px.bar(title='Stock restant par produit')
 
-    return metrics, fig_categorie, fig_periode, fig_stock
+    # Évolution du stock restant au fil du temps
+    stock_evolution_data = []
+    for p in produits:
+        prod_id = p['_id']
+        stock_initial = p['stock']
+        stock_actuel = stock_initial
+        # Parcourir les commandes triées par date pour calculer l'évolution
+        commandes_sorted = sorted(commandes, key=lambda x: x['date'])
+        for commande in commandes_sorted:
+            date = commande['date'].strftime(date_format)
+            for produit in commande['produits']:
+                if produit['produit_id'] == prod_id:
+                    quantite = produit['quantite']
+                    stock_actuel = max(0, stock_actuel - quantite)
+                    stock_evolution_data.append({
+                        'Produit': p['nom'],
+                        'Date': date,
+                        'Stock Restant': stock_actuel
+                    })
+
+    df_stock_evolution = pd.DataFrame(stock_evolution_data)
+    if not df_stock_evolution.empty:
+        df_stock_evolution = df_stock_evolution.sort_values('Date')
+        fig_stock_evolution = px.line(df_stock_evolution, x='Date', y='Stock Restant', color='Produit',
+                                      title='Évolution du stock restant au fil du temps',
+                                      line_shape='linear', render_mode='svg')
+        fig_stock_evolution.update_xaxes(range=[start_dt.strftime(date_format), end_dt.strftime(date_format)])
+    else:
+        fig_stock_evolution = px.line(title='Évolution du stock restant au fil du temps')
+
+    return metrics, fig_categorie, fig_periode, fig_stock, fig_stock_evolution
 
 
 # Callback pour l'export CSV

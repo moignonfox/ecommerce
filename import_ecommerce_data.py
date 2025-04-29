@@ -1,4 +1,3 @@
-# Fichier : import_ecommerce_data.py
 import pandas as pd
 import pymongo
 from datetime import datetime

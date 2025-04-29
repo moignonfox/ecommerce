@@ -1,4 +1,3 @@
-# Fichier : aggregations.py
 import pymongo
 from datetime import datetime
 

@@ -1,4 +1,3 @@
-# Fichier : api.py
 from fastapi import FastAPI
 from pymongo import MongoClient
 from datetime import datetime
